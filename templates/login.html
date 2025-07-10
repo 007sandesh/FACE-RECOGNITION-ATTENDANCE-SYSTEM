@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <title>DIGITAL HAJIR : Face Recognition based Attendance System</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css?family=Poppins:400,500,600,700&display=swap");
+    </style>
+    <link rel="stylesheet" href="/static/style1.css">
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="title">Admin Login</div>
+      {% if message %}
+    <p style="color: red;">{{ message }}</p>
+    {% endif %}
+      <form
+        action="/login"
+        method="post"
+        autocomplete="off"
+        onsubmit="return validateForm()"
+      >
+        <div class="field">
+          <input type="text" name="username"/>
+          <label>Username</label>
+        </div>
+        <div class="field">
+          <input type="password" name="password"/>
+          <label>Password</label>
+        </div>
+        <div class="content">
+          <div class="checkbox">
+            <input type="checkbox" id="remember-me" />
+            <label for="remember-me">Remember me</label>
+          </div>
+        </div>
+        <div class="field">
+          <input type="submit" value="Login" />
+        </div>
+      </form>
+    </div>
+
+
+    <script>
+      function validateForm() {
+        // Get the form input fields
+        var username = document.getElementsByName("username")[0].value;
+        var password = document.getElementsByName("password")[0].value;
+
+        // Check if the username and password are empty
+        if (username.trim() === "" || password.trim() === "") {
+          alert("Please enter both username and password.");
+          return false;
+        }
+        return true;
+      }
+    </script>
+  </body>
+</html>

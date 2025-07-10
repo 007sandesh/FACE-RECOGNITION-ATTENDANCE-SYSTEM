@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capture Face Images</title>
+    <link rel="stylesheet" href="/static/js/styles.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        .btn {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .progress-container {
+            width: 80%;
+            margin: 20px auto;
+            text-align: left;
+        }
+        .progress-bar {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            padding: 3px;
+        }
+        .progress {
+            height: 24px;
+            background-color: #4CAF50;
+            border-radius: 4px;
+            width: 0%;
+            text-align: center;
+            line-height: 24px;
+            color: white;
+        }
+        .thumbnails {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin: 20px auto;
+        }
+        .thumbnail {
+            margin: 5px;
+            border: 1px solid #ddd;
+            width: 50px;
+            height: 50px;
+        }
+        #imageUploader {
+            display: none;
+        }
+        .toggle-container {
+            margin: 10px 0;
+        }
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #2196F3;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+    </style>
+</head>
+<body>
+    <h1>Capture Face Images</h1>
+    <p>We need to capture 20 face images for training. Please look at the camera and move your head slightly between captures.</p>
+    
+    <div class="main-container">
+        <div class="canvas-container">
+            <canvas id="camCanvas"></canvas>
+            <canvas id="detectionCanvas"></canvas>
+        </div>
+    </div>
+    
+    <div class="progress-container">
+        <div class="progress-bar">
+            <div class="progress" id="progress">0%</div>
+        </div>
+    </div>
+    
+    <div class="toggle-container">
+        <label>Enable Training Mode: 
+            <label class="toggle-switch">
+                <input type="checkbox" id="training-mode-toggle" checked>
+                <span class="slider"></span>
+            </label>
+        </label>
+        <p class="toggle-description">Training mode helps the system learn your specific facial features for better recognition</p>
+    </div>
+    
+    <div>
+        <button id="startButton" class="btn" style="display: none;">TOGGLE WEBCAM</button>
+        <button id="capture-btn" class="btn">START CAPTURING</button>
+        <button id="finish-btn" class="btn" disabled>FINISH & CONTINUE</button>
+    </div>
+    
+    <div id="status">Starting camera, please wait...</div>
+    
+    <div class="thumbnails" id="thumbnails">
+        <!-- Thumbnails will be added here -->
+    </div>
+    
+    <script src="/static/js/script.js"></script>
+    <script src="/static/js/image.js"></script>
+    <script src="/static/js/haarFeature.js"></script>
+    <script src="/static/js/controls.js"></script>
+    <script src="/static/js/ViolaJonesFaceDetection.js"></script>
+    
+    <script>
+        // Get user information from URL parameters
+        const username = "{{ username }}";
+        const rollno = "{{ rollno }}";
+        
+        document.addEventListener("DOMContentLoaded", () => {
+            // Set up DOM elements
+            const captureBtn = document.getElementById('capture-btn');
+            const finishBtn = document.getElementById('finish-btn');
+            const statusDiv = document.getElementById('status');
+            const progressBar = document.getElementById('progress');
+            const thumbnailsDiv = document.getElementById('thumbnails');
+            const startButton = document.getElementById('startButton');
+            const trainingModeToggle = document.getElementById('training-mode-toggle');
+            
+            // Variables for frame processing
+            let isProcessingFrame = false;
+            let frameSkipCount = 0;
+            const frameSkipRate = 2; // Process every 3rd frame
+            let faceDetectionHistory = []; // Store face detection history to reduce false positives
+            const historyLength = 5; // Number of frames to keep in history
+            
+            // Initialize training mode
+            if (typeof setTrainingMode === 'function') {
+                setTrainingMode(trainingModeToggle.checked);
+                
+                trainingModeToggle.addEventListener('change', function() {
+                    setTrainingMode(this.checked);
+                    statusDiv.textContent = this.checked ? 
+                        "Training mode enabled - system will learn your facial features" : 
+                        "Training mode disabled";
+                });
+            } else {
+                // If the function doesn't exist yet, hide the toggle
+                document.querySelector('.toggle-container').style.display = 'none';
+            }
+            
+            // Override drawFrame function for optimized processing
+            const originalDrawFrame = window.drawFrame;
+            window.drawFrame = function() {
+                // Skip frames to improve performance
+                frameSkipCount = (frameSkipCount + 1) % frameSkipRate;
+                
+                // Always draw the video frame
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                
+                if (cameraEnabled) {
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                } else if (uploadedImage) {
+                    drawImageInteractive(uploadedImage, context, canvas);
+                }
+                
+                // Only process face detection on certain frames
+                if (!isProcessingFrame && frameSkipCount === 0) {
+                    runOptimizedFaceDetection();
+                }
+                
+                // Display existing face boxes even when skipping detection
+                if (window.stableFaces && window.stableFaces.length > 0) {
+                    displayDetectedFaces(window.stableFaces);
+                }
+                
+                requestAnimationFrame(drawFrame);
+            };
+            
+            // Function to display detected faces
+            function displayDetectedFaces(faces) {
+                faces.forEach(pos => {
+                    if (pos.confidency > userDetectionThreshold) {
+                        context.beginPath();
+                        context.rect(
+                            pos.x * feedToInputDiff,
+                            pos.y * feedToInputDiff,
+                            WINDOW_SIZE * pos.scaleFactor * feedToInputDiff,
+                            WINDOW_SIZE * pos.scaleFactor * feedToInputDiff
+                        );
+                        context.strokeStyle = "lime";
+                        context.lineWidth = 5;
+                        context.stroke();
+                        
+                        // Display confidence score
+                        context.font = "16px Arial";
+                        context.fillStyle = "lime";
+                        context.strokeStyle = "black";
+                        context.lineWidth = 1;
+                        const confidenceText = "Conf: " + Math.round(pos.confidency);
+                        context.fillText(confidenceText, 
+                            pos.x * feedToInputDiff, 
+                            (pos.y * feedToInputDiff) - 5);
+                    }
+                });
+            }
+            
+            // Get stable faces by analyzing detection history
+            function getStableFaces(detectedFaces) {
+                // Add current detection to history
+                faceDetectionHistory.push(detectedFaces);
+                
+                // Keep history at fixed length
+                if (faceDetectionHistory.length > historyLength) {
+                    faceDetectionHistory.shift();
+                }
+                
+                // If history is not full yet, return current detection
+                if (faceDetectionHistory.length < 3) {
+                    return detectedFaces;
+                }
+                
+                // Count face occurrences in similar positions
+                let stableFaces = [];
+                
+                // For each face in the current detection
+                detectedFaces.forEach(currentFace => {
+                    // Count how many times a similar face appears in history
+                    let occurrences = 0;
+                    
+                    // Check each frame in history
+                    faceDetectionHistory.forEach(historyFrame => {
+                        // Look for similar face in this history frame
+                        const similarFace = historyFrame.find(historyFace => 
+                            Math.abs(historyFace.x - currentFace.x) < WINDOW_SIZE/2 &&
+                            Math.abs(historyFace.y - currentFace.y) < WINDOW_SIZE/2
+                        );
+                        
+                        if (similarFace) {
+                            occurrences++;
+                        }
+                    });
+                    
+                    // If face appears in at least half of the history frames, consider it stable
+                    if (occurrences >= Math.floor(historyLength / 2)) {
+                        stableFaces.push(currentFace);
+                    }
+                });
+                
+                return stableFaces.length > 0 ? stableFaces : detectedFaces;
+            }
+            
+            // Optimized face detection function
+            function runOptimizedFaceDetection() {
+                isProcessingFrame = true;
+                
+                detectionContext.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+                detectionContext.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, detectionCanvas.width, detectionCanvas.height);
+                
+                const imageData = detectionContext.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height);
+                const pixels = imageData.data;
+                
+                const processedImage = processImageData(pixels, detectionCanvas.width, detectionCanvas.height);
+                const integralImage = processedImage.integralMatrix;
+                const squaredIntegralImage = processedImage.squaredIntegralMatrix;
+                const detectedFaces = findFaces(integralImage, squaredIntegralImage, detectionCanvas.width, detectionCanvas.height, 1.5, 5, 0.25);
+                
+                // Get stable faces to reduce false positives
+                window.stableFaces = getStableFaces(detectedFaces);
+                
+                // Display the detected faces
+                displayDetectedFaces(window.stableFaces);
+                
+                isProcessingFrame = false;
+            }
+            
+            // Auto-start the camera when page loads
+            setTimeout(function() {
+                if (!cameraEnabled) {
+                    startButton.click();
+                    statusDiv.textContent = "Camera started. Click START CAPTURING to begin.";
+                }
+            }, 500);
+            
+            // Variables for capture
+            let isCapturing = false;
+            let captureInterval = null;
+            let imagesCount = 0;
+            const TOTAL_IMAGES = 20;
+            
+            // Update progress bar
+            function updateProgress() {
+                let percent = Math.round((imagesCount / TOTAL_IMAGES) * 100);
+                progressBar.style.width = percent + "%";
+                progressBar.textContent = imagesCount + "/" + TOTAL_IMAGES + " (" + percent + "%)";
+                statusDiv.textContent = "Captured " + imagesCount + " of " + TOTAL_IMAGES + " images";
+            }
+            
+            // Capture face and save to server
+            function captureFace() {
+                // Check if camera is enabled
+                if (!cameraEnabled) {
+                    startButton.click();
+                    statusDiv.textContent = "Starting camera first...";
+                    setTimeout(function() {
+                        if (isCapturing) captureFace();
+                    }, 1500);
+                    return;
+                }
+                
+                // Force a face detection if we don't have any faces
+                if (!window.stableFaces || window.stableFaces.length === 0) {
+                    runOptimizedFaceDetection();
+                }
+                
+                // Check if we have a face detected
+                if (!window.stableFaces || window.stableFaces.length === 0) {
+                    statusDiv.textContent = "No face detected with sufficient confidence!";
+                    return;
+                }
+                
+                // Find face with highest confidence
+                let bestFace = null;
+                let highestConfidence = userDetectionThreshold;
+                
+                window.stableFaces.forEach(face => {
+                    if (face.confidency > highestConfidence) {
+                        bestFace = face;
+                        highestConfidence = face.confidency;
+                    }
+                });
+                
+                if (!bestFace) {
+                    statusDiv.textContent = "No face detected with sufficient confidence!";
+                    return;
+                }
+                
+                // Create temporary canvas to extract face image
+                const faceCanvas = document.createElement('canvas');
+                faceCanvas.width = 50;
+                faceCanvas.height = 50;
+                const faceCtx = faceCanvas.getContext('2d');
+                
+                // Extract face from detection canvas
+                const x = bestFace.x;
+                const y = bestFace.y;
+                const size = WINDOW_SIZE * bestFace.scaleFactor;
+                
+                // Draw the face on the temporary canvas
+                faceCtx.drawImage(
+                    detectionCanvas, 
+                    x, y, size, size,
+                    0, 0, 50, 50
+                );
+                
+                // Convert to data URL and send to server
+                let faceImageData = faceCanvas.toDataURL('image/jpeg');
+                
+                // Add thumbnail
+                let thumbnail = document.createElement('img');
+                thumbnail.src = faceImageData;
+                thumbnail.className = 'thumbnail';
+                thumbnailsDiv.appendChild(thumbnail);
+                
+                // Save to server
+                fetch('/save_face', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        rollno: rollno,
+                        image: faceImageData,
+                        index: imagesCount,
+                        trainingMode: trainingModeToggle.checked
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        imagesCount++;
+                        updateProgress();
+                        
+                        if (imagesCount >= TOTAL_IMAGES) {
+                            stopCapture();
+                            
+                            // If training mode was enabled, finalize the training
+                            if (trainingModeToggle.checked && typeof updateUserSpecificThresholds === 'function') {
+                                updateUserSpecificThresholds();
+                                statusDiv.textContent = "All images captured and training completed!";
+                            } else {
+                                statusDiv.textContent = "All images captured successfully!";
+                            }
+                            
+                            finishBtn.disabled = false;
+                        }
+                    } else {
+                        statusDiv.textContent = "Error: " + data.error;
+                    }
+                })
+                .catch(error => {
+                    statusDiv.textContent = "Error saving image: " + error.message;
+                    console.error("Error saving image:", error);
+                });
+            }
+            
+            // Start capture process
+            function startCapture() {
+                if (isCapturing) return;
+                
+                // Ensure camera is on
+                if (!cameraEnabled) {
+                    startButton.click();
+                    statusDiv.textContent = "Starting camera first...";
+                    setTimeout(startCapture, 1500);
+                    return;
+                }
+                
+                isCapturing = true;
+                captureBtn.textContent = "PAUSE CAPTURE";
+                
+                // If training mode is enabled, show appropriate message
+                if (trainingModeToggle.checked) {
+                    statusDiv.textContent = "Capturing faces with training mode enabled...";
+                } else {
+                    statusDiv.textContent = "Capturing faces...";
+                }
+                
+                // Capture a face every 500ms
+                captureInterval = setInterval(() => {
+                    if (imagesCount < TOTAL_IMAGES) {
+                        captureFace();
+                    } else {
+                        stopCapture();
+                        statusDiv.textContent = "All images captured successfully!";
+                        finishBtn.disabled = false;
+                    }
+                }, 500);
+            }
+            
+            // Stop capture process
+            function stopCapture() {
+                if (!isCapturing) return;
+                
+                isCapturing = false;
+                captureBtn.textContent = "RESUME CAPTURE";
+                statusDiv.textContent = "Capture paused";
+                
+                if (captureInterval) {
+                    clearInterval(captureInterval);
+                    captureInterval = null;
+                }
+            }
+            
+            // Toggle capture
+            captureBtn.addEventListener('click', function() {
+                if (isCapturing) {
+                    stopCapture();
+                } else {
+                    startCapture();
+                }
+            });
+            
+            // Finish button
+            finishBtn.addEventListener('click', function() {
+                // If we're using training mode, save the learned data
+                if (trainingModeToggle.checked && typeof setTrainingMode === 'function') {
+                    // Disable training mode to finalize learning
+                    setTrainingMode(false);
+                    
+                    // Could add an API endpoint to save the learned data for this user
+                    fetch('/save_training_data', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            username: username,
+                            rollno: rollno,
+                            // We could send the learned thresholds here if needed
+                        })
+                    }).catch(error => {
+                        console.error("Error saving training data:", error);
+                    });
+                }
+                
+                window.location.href = "/home";
+            });
+            
+            // Initialize when page loads
+            updateProgress();
+        });
+    </script>
+</body>
+</html> 

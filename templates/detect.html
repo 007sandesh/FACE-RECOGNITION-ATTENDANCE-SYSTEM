@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Face Detection</title>
+    <link rel="stylesheet" href="/static/js/styles.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        .btn {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .canvas-container {
+            margin: 20px auto;
+            position: relative;
+        }
+        #imageUploader {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Face Recognition Attendance System</h1>
+    
+    <div class="main-container">
+        <div class="canvas-container">
+            <canvas id="camCanvas"></canvas>
+            <canvas id="detectionCanvas"></canvas>
+            <div class="controls">
+                <div class="toggle-container" style="margin: 10px 0;">
+                    <label>Use Training Data: 
+                        <label class="toggle-switch" style="position: relative; display: inline-block; width: 60px; height: 34px;">
+                            <input type="checkbox" id="training-mode-toggle" checked>
+                            <span class="slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px;"></span>
+                        </label>
+                    </label>
+                    <p style="font-size: 0.9em; color: #666;">Using trained data improves recognition accuracy for your specific facial features</p>
+                </div>
+
+                <div>
+                    <button id="startButton" class="btn" style="display: none;">TOGGLE WEBCAM</button>
+                    <button id="recognize-btn" class="btn">MARK ATTENDANCE</button>
+                    <button id="back-btn" class="btn" onclick="window.location.href='/home'">BACK TO HOME</button>
+                    <input type="file" id="imageUploader" accept="image/*">
+                    <span>Detection Threshold: </span>
+                    <input type="range" min="0" max="600" value="300" class="slider" id="detectionThreshold">
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="status">Starting camera, please wait...</div>
+    
+    <script src="/static/js/script.js"></script>
+    <script src="/static/js/image.js"></script>
+    <script src="/static/js/haarFeature.js"></script>
+    <script src="/static/js/controls.js"></script>
+    <script src="/static/js/ViolaJonesFaceDetection.js"></script>
+    
+    <script>
+        // Override the drawFrame function to add recognized name display
+        let recognizedName = null;
+        let lastRecognitionTime = 0;
+        const recognitionCooldown = 3000; // 3 seconds cooldown between recognitions
+        let isProcessingFrame = false; // Flag to prevent multiple simultaneous frame processing
+        let frameSkipCount = 0; // Counter for frame skipping
+        const frameSkipRate = 2; // Process every 3rd frame
+        let faceDetectionHistory = []; // Store face detection history to reduce false positives
+        const historyLength = 5; // Number of frames to keep in history
+        
+        // Training mode toggle handling
+        const trainingModeToggle = document.getElementById('training-mode-toggle');
+        if (trainingModeToggle && typeof userFaceData !== 'undefined') {
+            // Initialize adaptive thresholds based on toggle state
+            userFaceData.adaptiveThresholds = trainingModeToggle.checked;
+            
+            // Add event listener for toggle changes
+            trainingModeToggle.addEventListener('change', function() {
+                if (typeof userFaceData !== 'undefined') {
+                    userFaceData.adaptiveThresholds = this.checked;
+                    document.getElementById('status').textContent = 
+                        this.checked ? "Using trained face data for recognition" : "Using default recognition settings";
+                }
+            });
+            
+            // Try to load saved training data from localStorage
+            try {
+                const savedData = localStorage.getItem('userFaceTrainingData');
+                if (savedData) {
+                    const parsedData = JSON.parse(savedData);
+                    
+                    // Only use saved data if toggle is checked
+                    if (trainingModeToggle.checked) {
+                        // Merge saved data with current data
+                        if (parsedData.userSpecificThresholds) {
+                            userFaceData.userSpecificThresholds = parsedData.userSpecificThresholds;
+                        }
+                        
+                        if (parsedData.confidenceMultipliers) {
+                            userFaceData.confidenceMultipliers = parsedData.confidenceMultipliers;
+                        }
+                        
+                        document.getElementById('status').textContent = "Loaded saved training data for better recognition";
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load training data:", e);
+            }
+        } else if (trainingModeToggle) {
+            // Hide the toggle if userFaceData is not defined
+            trainingModeToggle.parentElement.parentElement.style.display = 'none';
+        }
+        
+        // Store original drawFrame function
+        const originalDrawFrame = window.drawFrame;
+        
+        // Override with our custom function
+        window.drawFrame = function() {
+            // Skip frames to improve performance
+            frameSkipCount = (frameSkipCount + 1) % frameSkipRate;
+            
+            // Always draw the video frame
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (cameraEnabled) {
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            } else if (uploadedImage) {
+                drawImageInteractive(uploadedImage, context, canvas);
+                context.font = "40px Arial";
+                context.fillStyle = "white";
+                context.strokeStyle = "black";
+                context.lineWidth = 1;
+                context.fillText("Drag to move", 10, 50);
+                context.strokeText("Drag to move", 10, 50);
+                context.fillText("Scroll to zoom", 10, 100);
+                context.strokeText("Scroll to zoom", 10, 100);
+            }
+
+            // Only process face detection on certain frames to improve performance
+            if (!isProcessingFrame && frameSkipCount === 0) {
+                // Run face detection with our custom handling
+                runFaceDetectionWithRecognition();
+            }
+            
+            // Display stable face boxes and names even when skipping detection
+            if (window.stableFaces && window.stableFaces.length > 0) {
+                displayDetectedFaces(window.stableFaces);
+            }
+            
+            requestAnimationFrame(drawFrame);
+        };
+        
+        // Function to display detected faces
+        function displayDetectedFaces(faces) {
+            faces.forEach(pos => {
+                if (pos.confidency > userDetectionThreshold) {
+                    context.beginPath();
+                    context.rect(
+                        pos.x * feedToInputDiff,
+                        pos.y * feedToInputDiff,
+                        WINDOW_SIZE * pos.scaleFactor * feedToInputDiff,
+                        WINDOW_SIZE * pos.scaleFactor * feedToInputDiff
+                    );
+                    context.strokeStyle = "lime";
+                    context.lineWidth = 5;
+                    context.stroke();
+                    
+                    // Display recognized name if available
+                    if (recognizedName) {
+                        context.font = "24px Arial";
+                        context.fillStyle = "lime";
+                        context.strokeStyle = "black";
+                        context.lineWidth = 1;
+                        
+                        // Position text above the face rectangle
+                        const textX = pos.x * feedToInputDiff;
+                        const textY = pos.y * feedToInputDiff - 10;
+                        
+                        context.fillText(recognizedName, textX, textY);
+                        context.strokeText(recognizedName, textX, textY);
+                    }
+                }
+            });
+        }
+        
+        // Get stable faces by analyzing detection history
+        function getStableFaces(detectedFaces) {
+            // Add current detection to history
+            faceDetectionHistory.push(detectedFaces);
+            
+            // Keep history at fixed length
+            if (faceDetectionHistory.length > historyLength) {
+                faceDetectionHistory.shift();
+            }
+            
+            // If history is not full yet, return current detection
+            if (faceDetectionHistory.length < 3) {
+                return detectedFaces;
+            }
+            
+            // Count face occurrences in similar positions
+            let stableFaces = [];
+            
+            // For each face in the current detection
+            detectedFaces.forEach(currentFace => {
+                // Count how many times a similar face appears in history
+                let occurrences = 0;
+                
+                // Check each frame in history
+                faceDetectionHistory.forEach(historyFrame => {
+                    // Look for similar face in this history frame
+                    const similarFace = historyFrame.find(historyFace => 
+                        Math.abs(historyFace.x - currentFace.x) < WINDOW_SIZE/2 &&
+                        Math.abs(historyFace.y - currentFace.y) < WINDOW_SIZE/2
+                    );
+                    
+                    if (similarFace) {
+                        occurrences++;
+                    }
+                });
+                
+                // If face appears in at least half of the history frames, consider it stable
+                if (occurrences >= Math.floor(historyLength / 2)) {
+                    stableFaces.push(currentFace);
+                }
+            });
+            
+            return stableFaces.length > 0 ? stableFaces : detectedFaces;
+        }
+        
+        // Custom function to run face detection and add recognized name
+        function runFaceDetectionWithRecognition() {
+            isProcessingFrame = true;
+            
+            detectionContext.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+            detectionContext.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, detectionCanvas.width, detectionCanvas.height);
+
+            const imageData = detectionContext.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height);
+            const pixels = imageData.data;
+
+            const processedImage = processImageData(pixels, detectionCanvas.width, detectionCanvas.height);
+            const integralImage = processedImage.integralMatrix;
+            const squaredIntegralImage = processedImage.squaredIntegralMatrix;
+            const detectedFaces = findFaces(integralImage, squaredIntegralImage, detectionCanvas.width, detectionCanvas.height, 1.5, 5, 0.25);
+            
+            // Get stable faces to reduce false positives
+            window.stableFaces = getStableFaces(detectedFaces);
+            
+            // Display the stable faces
+            displayDetectedFaces(window.stableFaces);
+            
+            isProcessingFrame = false;
+        }
+        
+        // Add recognition functionality
+        document.addEventListener("DOMContentLoaded", () => {
+            const recognizeBtn = document.getElementById('recognize-btn');
+            const statusDiv = document.getElementById('status');
+            const startButton = document.getElementById('startButton');
+            
+            // Auto-start the camera when page loads
+            setTimeout(function() {
+                if (!cameraEnabled) {
+                    startButton.click();
+                    statusDiv.textContent = "Camera started. Position your face and click MARK ATTENDANCE";
+                }
+            }, 500);
+            
+            recognizeBtn.addEventListener('click', function() {
+                // Ensure camera is enabled
+                if (!cameraEnabled) {
+                    startButton.click();
+                    statusDiv.textContent = "Starting camera first...";
+                    setTimeout(recognizeFace, 1500);  // Give time for camera to initialize
+                    return;
+                }
+                
+                // Only send face for recognition if cooldown has passed
+                let now = Date.now();
+                if (now - lastRecognitionTime > recognitionCooldown) {
+                    lastRecognitionTime = now;
+                    recognizeFace();
+                } else {
+                    statusDiv.textContent = "Please wait before trying again...";
+                }
+            });
+            
+            function recognizeFace() {
+                // Check if camera is enabled
+                if (!cameraEnabled) {
+                    statusDiv.textContent = "Please enable the camera first!";
+                    return;
+                }
+                
+                // Check if we have stable faces detected
+                if (!window.stableFaces || window.stableFaces.length === 0) {
+                    // Force a face detection if we don't have any faces
+                    runFaceDetectionWithRecognition();
+                    
+                    // Check again after detection
+                    if (!window.stableFaces || window.stableFaces.length === 0) {
+                        statusDiv.textContent = "No face detected with sufficient confidence!";
+                        return;
+                    }
+                }
+                
+                // Find face with highest confidence
+                let bestFace = null;
+                let highestConfidence = userDetectionThreshold;
+                
+                window.stableFaces.forEach(face => {
+                    if (face.confidency > highestConfidence) {
+                        bestFace = face;
+                        highestConfidence = face.confidency;
+                    }
+                });
+                
+                if (!bestFace) {
+                    statusDiv.textContent = "No face detected with sufficient confidence!";
+                    return;
+                }
+                
+                // Create temporary canvas to extract face image
+                const faceCanvas = document.createElement('canvas');
+                faceCanvas.width = 50;
+                faceCanvas.height = 50;
+                const faceCtx = faceCanvas.getContext('2d');
+                
+                // Extract face from detection canvas
+                const x = bestFace.x;
+                const y = bestFace.y;
+                const size = WINDOW_SIZE * bestFace.scaleFactor;
+                
+                // Draw the face on the temporary canvas
+                faceCtx.drawImage(
+                    detectionCanvas, 
+                    x, y, size, size,
+                    0, 0, 50, 50
+                );
+                
+                // Convert to base64 for sending to server
+                const faceImageData = faceCanvas.toDataURL('image/jpeg');
+                
+                // Send to server for recognition
+                statusDiv.textContent = "Recognizing face...";
+                recognizedName = null; // Clear previous recognition
+                
+                fetch('/recognize', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: faceImageData })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        statusDiv.textContent = "Error: " + data.error;
+                    } else {
+                        statusDiv.textContent = "Recognized: " + data.label + " (Confidence: " + data.confidence.toFixed(2) + ")";
+                        // Store recognized name to display on face box
+                        recognizedName = data.label;
+                    }
+                })
+                .catch(error => {
+                    statusDiv.textContent = "Recognition error: " + error.message;
+                    console.error("Recognition error:", error);
+                });
+            }
+        });
+    </script>
+</body>
+</html> 

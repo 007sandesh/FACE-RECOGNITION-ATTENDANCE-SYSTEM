@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js"></script>
+    <script src="image.js"></script>
+    <script src="haarFeature.js"></script>
+    <script src="controls.js"></script>
+    <script src="ViolaJonesFaceDetection.js"></script>
+    <title>Viola Jones Face Detection</title>
+</head>
+<body>
+    <header>
+        <h1>Viola-Jones Face Detection</h1>
+    </header>
+    <div class="main-container">
+        <div class="canvas-container">
+            <canvas id="camCanvas"></canvas>
+            <canvas id="detectionCanvas"></canvas>
+            <div class="controls">
+                <button id="startButton">TOGGLE WEBCAM</button>
+                <button id="fileButton">UPLOAD IMAGE</button>
+                <input type="file" id="imageUploader" accept="image/*">
+                <span>Detection Threshold: </span>
+                <input type="range" min="0" max="600" value="300" class="slider" id="detectionThreshold">
+            </div>
+        </div>
+    </div>
+</body>
+</html>
