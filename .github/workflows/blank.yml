@@ -16,24 +16,16 @@ jobs:
       - name: Run build
         run: echo "✅ Build successful for commit $GITHUB_SHA"
 
-      - name: Extract Jira Issue Key
-        id: extract
-        run: |
-          echo "MESSAGE=${{ github.event.head_commit.message }}" >> $GITHUB_ENV
-          ISSUE_KEY=$(echo "${{ github.event.head_commit.message }}" | grep -oE 'FRAS-[0-9]+')
-          echo "ISSUE_KEY=$ISSUE_KEY" >> $GITHUB_ENV
-          echo "Extracted issue key: $ISSUE_KEY"
-
       - name: Report deployment to Jira
-        if: env.ISSUE_KEY != ''
         uses: atlassian/gajira-cli@v3
         with:
-          args: >
-            deploy create
-            --issue "${{ env.ISSUE_KEY }}"
-            --environment "production"
-            --state successful
+          version: 1.0.0
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_SITE }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      - run: |
+          jira deploy create \
+            --issue "FRAS-20" \
+            --environment "production" \
+            --state successful
