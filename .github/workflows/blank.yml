@@ -3,7 +3,7 @@ name: FRAS CI/CD Pipeline
 on:
   push:
     branches:
-      - main
+      - "*"
 
 jobs:
   build-and-deploy:
@@ -19,12 +19,19 @@ jobs:
       - name: Report deployment to Jira
         uses: atlassian/gajira-cli@v3
         with:
-          script: |
-            deploy create \
-              --issue "FRAS-12" \
-              --environment "production" \
-              --state successful
+          version: 3
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_SITE }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          ISSUE_KEY=$(echo "${{ github.event.head_commit.message }}" | grep -oE "FRAS-[0-9]+")
+          if [ -n "$ISSUE_KEY" ]; then
+            echo "Reporting deployment for $ISSUE_KEY"
+            jira deploy create \
+              --issue "$ISSUE_KEY" \
+              --environment "staging" \
+              --state successful
+          else
+            echo "⚠️ No Jira issue key found in commit message"
+          fi
