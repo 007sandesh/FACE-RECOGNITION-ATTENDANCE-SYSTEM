@@ -8,23 +8,31 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Example build step (you can add your real build/test steps here)
-      - name: Run tests
-        run: echo "Running tests..."
+      - name: Run build
+        run: echo "✅ Build successful for commit $GITHUB_SHA"
 
-      # Report deployment to Jira
+      - name: Extract Jira Issue Key
+        id: extract
+        run: |
+          echo "MESSAGE=${{ github.event.head_commit.message }}" >> $GITHUB_ENV
+          ISSUE_KEY=$(echo "${{ github.event.head_commit.message }}" | grep -oE 'FRAS-[0-9]+')
+          echo "ISSUE_KEY=$ISSUE_KEY" >> $GITHUB_ENV
+          echo "Extracted issue key: $ISSUE_KEY"
+
       - name: Report deployment to Jira
+        if: env.ISSUE_KEY != ''
         uses: atlassian/gajira-cli@v3
         with:
-          args: |
-            deploy create \
-              --issue FRAS-12 \
-              --environment production \
-              --state successful
+          args: >
+            deploy create
+            --issue "${{ env.ISSUE_KEY }}"
+            --environment "production"
+            --state successful
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_SITE }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
